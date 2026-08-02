@@ -11,3 +11,8 @@ wheels/
 
 # AWS credentials
 aws_credentials/
+
+#DS store
+.DS_Store
+
+#
