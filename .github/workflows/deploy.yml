@@ -1,0 +1,109 @@
+name: CI/CD Pipeline - YoutubeAnalyticsPipeline
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+permissions:
+  id-token: write  # Required for AWS OIDC
+  contents: read
+
+jobs:
+  # -------------------------------------------------------------
+  # STAGE 1: SYNTAX CHECKING & LINTING
+  # -------------------------------------------------------------
+  validate:
+    name: Code Validation & Syntax Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Validate Python Syntax across all folders
+        run: |
+          python -m py_compile data_quality/*.py
+          python -m py_compile glue_jobs/*.py
+          python -m py_compile lambda_function/s3_bronzeJSON_to_silverparquet/*.py
+          python -m py_compile lambda_function/youtube_API_ingestion/*.py
+
+      - name: Validate Step Function JSON Syntax
+        run: |
+          python -c "import json; json.load(open('step_functions/pipeline_orchestrations.json'))"
+
+  # -------------------------------------------------------------
+  # STAGE 2: AUTOMATED DEPLOYMENT TO AWS
+  # -------------------------------------------------------------
+  deploy:
+    name: Deploy Scripts to AWS Services
+    needs: validate
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # ---------------------------------------------------------
+      # 1. DEPLOY GLUE ETL SCRIPTS TO S3
+      # ---------------------------------------------------------
+      - name: Deploy Glue Scripts to S3
+        run: |
+          aws s3 sync glue_jobs/ s3://${{ vars.GLUE_S3_BUCKET }}/scripts/glue_jobs/ \
+            --exclude ".*" \
+            --exclude "__MACOSX/*"
+
+      # ---------------------------------------------------------
+      # 2. DEPLOY LAMBDA FUNCTIONS
+      # ---------------------------------------------------------
+      - name: Deploy Data Quality Lambda
+        run: |
+          cd data_quality
+          zip -j dq_lambda.zip dq_lambda.py
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_DQ_NAME }} \
+            --zip-file fileb://dq_lambda.zip
+          cd ..
+
+      - name: Deploy YouTube API Ingestion Lambda
+        run: |
+          cd lambda_function/youtube_API_ingestion
+          zip -r ingestion_lambda.zip . -x "*.git*"
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_INGESTION_NAME }} \
+            --zip-file fileb://ingestion_lambda.zip
+          cd ../..
+
+      - name: Deploy JSON to Parquet Lambda
+        run: |
+          cd lambda_function/s3_bronzeJSON_to_silverparquet
+          zip -r parquet_lambda.zip . -x "*.git*"
+          aws lambda update-function-code \
+            --function-name ${{ vars.LAMBDA_PARQUET_NAME }} \
+            --zip-file fileb://parquet_lambda.zip
+          cd ../..
+
+      # ---------------------------------------------------------
+      # 3. DEPLOY STEP FUNCTIONS STATE MACHINE
+      # ---------------------------------------------------------
+      - name: Deploy Step Functions Definition
+        run: |
+          aws stepfunctions update-state-machine \
+            --state-machine-arn ${{ vars.STEP_FUNCTION_ARN }} \
+            --definition file://step_functions/pipeline_orchestrations.json
