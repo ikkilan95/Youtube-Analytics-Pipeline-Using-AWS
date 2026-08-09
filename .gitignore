@@ -9,10 +9,5 @@ wheels/
 # Virtual environments
 .venv
 
-# AWS credentials
-aws_credentials/
-
 #DS store
 .DS_Store
-
-#
