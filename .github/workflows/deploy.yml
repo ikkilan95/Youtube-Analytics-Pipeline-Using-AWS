@@ -32,10 +32,10 @@ jobs:
 
       - name: Validate Python Syntax across all folders
         run: |
-          python -m py_compile data_quality/*.py
+          python -m py_compile data_quality/lambda_function.py
           python -m py_compile glue_jobs/*.py
-          python -m py_compile lambda_function/s3_bronzeJSON_to_silverparquet/*.py
-          python -m py_compile lambda_function/youtube_API_ingestion/*.py
+          python -m py_compile lambda_function/s3_bronzeJSON_to_silverparquet/lambda_function.py
+          python -m py_compile lambda_function/youtube_API_ingestion/lambda_function.py
 
       - name: Validate Step Function JSON Syntax
         run: |
@@ -75,7 +75,7 @@ jobs:
       - name: Deploy Data Quality Lambda
         run: |
           cd data_quality
-          zip -j dq_lambda.zip dq_lambda.py
+          zip -j dq_lambda.zip lambda_function.py
           aws lambda update-function-code \
             --function-name ${{ vars.LAMBDA_DQ_NAME }} \
             --zip-file fileb://dq_lambda.zip
